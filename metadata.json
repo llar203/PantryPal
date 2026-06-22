@@ -1,0 +1,10 @@
+{
+  "name": "PantryPal",
+  "description": "AI-powered smart pantry tracker and meal planner that helps families reduce food waste, save money, and craft delicious meals.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
