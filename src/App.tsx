@@ -24,7 +24,10 @@ import {
   Calendar,
   Send,
   HelpCircle,
-  HelpCircle as QuestionIcon
+  HelpCircle as QuestionIcon,
+  Upload,
+  Lock,
+  Pencil
 } from 'lucide-react';
 import FamilyHeader from './components/FamilyHeader';
 import { PantryItem, Recipe, GroceryItem, FamilyProfile, SavingStats, AssistantMessage } from './types';
@@ -43,6 +46,18 @@ export default function App() {
     itemsWastedCount: 3,
     wasteReductionRate: 90
   });
+
+  const [savingsGoal, setSavingsGoal] = useState<number>(() => {
+    const saved = localStorage.getItem('pantrypal_savings_goal');
+    return saved ? parseFloat(saved) : 200;
+  });
+  const [isEditingGoal, setIsEditingGoal] = useState<boolean>(false);
+  const [goalInput, setGoalInput] = useState<string>(savingsGoal.toString());
+
+  // Keep input in sync if savingsGoal changes from storage loading
+  useEffect(() => {
+    setGoalInput(savingsGoal.toString());
+  }, [savingsGoal]);
   
   // Family configuration
   const [profiles, setProfiles] = useState<FamilyProfile[]>([]);
@@ -67,6 +82,149 @@ export default function App() {
   const [scanType, setScanType] = useState<'receipt' | 'item' | 'barcode'>('receipt');
   const [scanLoading, setScanLoading] = useState(false);
   const [scannedPreviewItems, setScannedPreviewItems] = useState<any[]>([]);
+
+  // Real Camera & Image Upload state integration
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [showFlash, setShowFlash] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const miniChatContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Auto scroll inline assistant chat container to bottom
+  useEffect(() => {
+    if (miniChatContainerRef.current) {
+      miniChatContainerRef.current.scrollTo({
+        top: miniChatContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }, [chatMessages, chatLoading]);
+
+  // Manage camera stream lifecycle when scanner modal opens/closes
+  useEffect(() => {
+    if (!scannerOpen) {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        setCameraStream(null);
+      }
+      setCameraActive(false);
+      setCapturedPhoto(null);
+      setCameraError(null);
+    }
+  }, [scannerOpen]);
+
+  // Ensure webcam feed is updated when element attaches
+  useEffect(() => {
+    if (cameraActive && cameraStream && videoRef.current) {
+      videoRef.current.srcObject = cameraStream;
+      videoRef.current.play().catch(err => console.error("Webcam video play failed:", err));
+    }
+  }, [cameraActive, cameraStream]);
+
+  const startCamera = async () => {
+    setCameraError(null);
+    setCapturedPhoto(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { 
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+      setCameraStream(stream);
+      setCameraActive(true);
+    } catch (err: any) {
+      console.error("Camera access failed", err);
+      let errorMsg = "Could not access camera. Please check permissions.";
+      if (err.name === 'NotAllowedError') {
+        errorMsg = "Camera permission denied. Please enable camera access in your browser settings.";
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        errorMsg = "No camera found on this device.";
+      }
+      setCameraError(errorMsg);
+      setCameraActive(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setCameraActive(false);
+  };
+
+  const takeSnapshot = () => {
+    if (videoRef.current) {
+      setShowFlash(true);
+      setTimeout(() => setShowFlash(false), 150);
+      try {
+        const video = videoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          setCapturedPhoto(dataUrl);
+          stopCamera();
+        }
+      } catch (err) {
+        console.error("Failed to capture snapshot", err);
+        setCameraError("Failed to capture image from webcam.");
+      }
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setCapturedPhoto(reader.result);
+          stopCamera();
+          setCameraError(null);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setCapturedPhoto(reader.result);
+          stopCamera();
+          setCameraError(null);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
   const [customAddedItem, setCustomAddedItem] = useState({
     name: '',
     category: 'fridge' as const,
@@ -265,19 +423,31 @@ export default function App() {
     }
   };
 
-  // Triggering simulated item/receipt scanning
-  const executeScan = async () => {
+  // Triggering simulated or real item/receipt scanning
+  const executeScan = async (base64Image?: string) => {
     try {
       setScanLoading(true);
       setScannedPreviewItems([]);
       
+      const payload: any = {
+        inputType: scanType,
+        feedbackPrompt: ""
+      };
+
+      if (base64Image) {
+        // Strip out base64 header if present
+        const cleanBase64 = base64Image.includes('base64,') 
+          ? base64Image.split('base64,')[1] 
+          : base64Image;
+        
+        payload.imageBase64 = cleanBase64;
+        payload.mimeType = "image/jpeg";
+      }
+      
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          inputType: scanType,
-          feedbackPrompt: ""
-        })
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {
@@ -391,11 +561,11 @@ export default function App() {
   };
 
   // Chef Chat Assistant response API
-  const handleSendChatMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim() || chatLoading) return;
+  const handleSendChatMessage = async (e?: React.FormEvent, customMsg?: string) => {
+    if (e) e.preventDefault();
+    const userMessage = (customMsg || chatInput).trim();
+    if (!userMessage || chatLoading) return;
 
-    const userMessage = chatInput.trim();
     const newUserMsgObj: AssistantMessage = {
       id: Math.random().toString(),
       sender: 'user',
@@ -404,7 +574,9 @@ export default function App() {
     };
 
     setChatMessages(prev => [...prev, newUserMsgObj]);
-    setChatInput('');
+    if (!customMsg) {
+      setChatInput('');
+    }
     setChatLoading(true);
 
     try {
@@ -436,7 +608,50 @@ export default function App() {
 
   // Quick suggestion queries from customer in chat box
   const triggerQuickQuestion = (phrase: string) => {
-    setChatInput(phrase);
+    handleSendChatMessage(undefined, phrase);
+  };
+
+  // Helper to render message text elegantly with headers and paragraph spacing
+  const renderFormattedText = (text: string, isLightBg: boolean = false) => {
+    const lines = text.split('\n');
+    return lines.map((line, idx) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return <div key={idx} className="h-1.5" />;
+      }
+      
+      // Look for a Markdown style bold header
+      if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
+        const title = trimmed.replace(/\*\*/g, '');
+        return (
+          <div 
+            key={idx} 
+            className={`font-extrabold text-[13px] tracking-tight mb-1 mt-0.5 ${
+              isLightBg ? 'text-slate-950 font-black' : 'text-white'
+            }`}
+          >
+            {title}
+          </div>
+        );
+      }
+      
+      // Inline formatting helper for **bold words**
+      const parts = line.split('**');
+      return (
+        <p 
+          key={idx} 
+          className={`text-[11px] leading-relaxed font-medium ${
+            isLightBg ? 'text-slate-700' : 'text-indigo-50'
+          }`}
+        >
+          {parts.map((part, pIdx) => pIdx % 2 === 1 ? (
+            <strong key={pIdx} className={`font-extrabold ${isLightBg ? 'text-indigo-600' : 'text-amber-300'}`}>
+              {part}
+            </strong>
+          ) : part)}
+        </p>
+      );
+    });
   };
 
   // Filter logic details
@@ -566,18 +781,91 @@ export default function App() {
 
         {/* Household context info & helpful tips in sidebar bottom */}
         <div className="mt-auto pt-6 border-t border-slate-100 space-y-4">
-          <div className="bg-slate-900 rounded-2xl p-4 text-white space-y-3 shadow-xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl" />
+          <div className="bg-slate-900 rounded-2xl p-4 text-white space-y-3 shadow-xl relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+            
+            {/* Edit Pen in top right corner */}
+            <div className="absolute top-3 right-3 z-20 flex items-center gap-1">
+              {isEditingGoal ? (
+                <div className="flex items-center gap-1 bg-slate-800/90 rounded-lg p-0.5 border border-slate-700">
+                  <button 
+                    onClick={() => {
+                      const num = parseFloat(goalInput);
+                      if (!isNaN(num) && num > 0) {
+                        setSavingsGoal(num);
+                        localStorage.setItem('pantrypal_savings_goal', num.toString());
+                        setIsEditingGoal(false);
+                      }
+                    }}
+                    className="p-1 text-emerald-400 hover:text-emerald-300 hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                    title="Save target"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setGoalInput(savingsGoal.toString());
+                      setIsEditingGoal(false);
+                    }}
+                    className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                    title="Cancel"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsEditingGoal(true)}
+                  className="p-1.5 bg-slate-800/60 hover:bg-slate-800/90 text-slate-400 hover:text-white rounded-lg transition-all cursor-pointer opacity-0 group-hover:opacity-100 focus:opacity-100"
+                  title="Edit savings goal"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
             <div className="relative z-10">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Monthly Savings Goal</p>
               <p className="text-2xl font-extrabold text-white mt-1">${stats.moneySaved.toFixed(2)}</p>
+              
               <div className="w-full bg-slate-700/50 h-1 rounded-full overflow-hidden mt-2">
                 <div 
                   className="bg-emerald-400 h-full transition-all duration-300" 
-                  style={{ width: `${Math.min(100, (stats.moneySaved / 200) * 100)}%` }}
+                  style={{ width: `${Math.min(100, (stats.moneySaved / savingsGoal) * 100)}%` }}
                 />
               </div>
-              <p className="text-[10px] text-slate-400 mt-1">Target: $200.00 saved ({Math.round((stats.moneySaved / 200) * 100)}%)</p>
+
+              {isEditingGoal ? (
+                <div className="mt-2.5 flex items-center gap-1">
+                  <span className="text-[10px] text-slate-400 font-bold">Goal $:</span>
+                  <input
+                    type="number"
+                    step="5"
+                    min="1"
+                    className="bg-slate-800/90 border border-slate-700 rounded-lg px-2 py-0.5 text-xs text-white w-24 focus:outline-none focus:ring-1 focus:ring-emerald-400 font-bold"
+                    value={goalInput}
+                    onChange={(e) => setGoalInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const num = parseFloat(goalInput);
+                        if (!isNaN(num) && num > 0) {
+                          setSavingsGoal(num);
+                          localStorage.setItem('pantrypal_savings_goal', num.toString());
+                          setIsEditingGoal(false);
+                        }
+                      } else if (e.key === 'Escape') {
+                        setGoalInput(savingsGoal.toString());
+                        setIsEditingGoal(false);
+                      }
+                    }}
+                    autoFocus
+                  />
+                </div>
+              ) : (
+                <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                  Target: ${savingsGoal.toFixed(2)} saved ({Math.round((stats.moneySaved / savingsGoal) * 100)}%)
+                </p>
+              )}
             </div>
           </div>
           
@@ -818,55 +1106,108 @@ export default function App() {
                 <div className="space-y-6">
                   
                   {/* High-end Mini AI Assistant Card */}
-                  <div className="bg-indigo-600 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500 rounded-full blur-3xl opacity-60" />
+                  <div className="bg-indigo-600 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden border border-indigo-500/20">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500 rounded-full blur-3xl opacity-50" />
                     <div className="relative z-10 space-y-4">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-200">Interactive Assistant</span>
-                        <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-200 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          Interactive Support Chat
+                        </span>
+                        <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
                       </div>
-                      <h3 className="text-xl font-bold">Chef Answer Engine</h3>
-                      <p className="text-slate-100 text-sm leading-relaxed">
-                        Say: "What kind of dish can we throw together today using our expiring sourdough and mushrooms?"
-                      </p>
+                      <h3 className="text-lg font-black tracking-tight text-white flex items-center gap-1.5">
+                        Chef Answer Engine
+                      </h3>
 
-                      <div className="bg-white/10 p-3.5 rounded-2xl backdrop-blur-md border border-white/10 text-xs">
-                        <p className="font-semibold text-amber-300">💡 Popular Kitchen Queries:</p>
-                        <ul className="mt-2 space-y-1.5 text-[11px] text-slate-100">
-                          <li>
-                            <button onClick={() => { setChatOpen(true); triggerQuickQuestion("What can I substitute for buttermilk in baking?"); }} className="hover:underline text-left">
-                              → "What can I substitute for buttermilk?"
-                            </button>
-                          </li>
-                          <li>
-                            <button onClick={() => { setChatOpen(true); triggerQuickQuestion("How do I store cut avocados to keep them green?"); }} className="hover:underline text-left">
-                              → "How to stop avocados from browning?"
-                            </button>
-                          </li>
-                          <li>
-                            <button onClick={() => { setChatOpen(true); triggerQuickQuestion("How to keep spinach fresh longer?"); }} className="hover:underline text-left">
-                              → "How to store spinach correctly?"
-                            </button>
-                          </li>
-                        </ul>
+                      {/* 1. RECOMMENDATIONS MOVED TO THE TOP */}
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-200">💡 Popular Kitchen Queries:</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          <button
+                            onClick={() => triggerQuickQuestion("What can I substitute for buttermilk in baking?")}
+                            className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl text-[10px] font-bold text-white transition-all text-left truncate max-w-full cursor-pointer"
+                          >
+                            🥛 Buttermilk Substitutes
+                          </button>
+                          <button
+                            onClick={() => triggerQuickQuestion("How do I store cut avocados to keep them green?")}
+                            className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl text-[10px] font-bold text-white transition-all text-left truncate max-w-full cursor-pointer"
+                          >
+                            🥑 Stop Avocado Browning
+                          </button>
+                          <button
+                            onClick={() => triggerQuickQuestion("How to keep spinach fresh longer?")}
+                            className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl text-[10px] font-bold text-white transition-all text-left truncate max-w-full cursor-pointer"
+                          >
+                            🥬 Keep Spinach Fresh
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="flex gap-2">
+                      {/* 2. CHAT SCROLL CONTAINER WITH LIVE QUESTIONS VISIBLE */}
+                      <div className="bg-black/20 rounded-2xl p-3.5 border border-white/15">
+                        <div 
+                          ref={miniChatContainerRef}
+                          className="h-[210px] overflow-y-auto space-y-3.5 pr-1.5 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent flex flex-col"
+                        >
+                          {chatMessages.map((msg) => (
+                            <div 
+                              key={msg.id} 
+                              className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
+                            >
+                              <span className="text-[9px] text-indigo-200/80 mb-0.5 font-bold px-1">
+                                {msg.sender === 'user' ? 'You' : 'Chef Bot'} • {msg.timestamp}
+                              </span>
+                              <div 
+                                className={`px-3 py-2.5 rounded-2xl text-xs leading-relaxed max-w-[90%] shadow-sm ${
+                                  msg.sender === 'user' 
+                                    ? 'bg-emerald-500 text-white rounded-tr-none font-medium' 
+                                    : 'bg-white/10 text-indigo-50 border border-white/5 rounded-tl-none font-medium'
+                                  }`}
+                              >
+                                {msg.sender === 'user' ? (
+                                  <p className="whitespace-pre-line text-[11px] font-medium text-white">{msg.text}</p>
+                                ) : (
+                                  renderFormattedText(msg.text)
+                                )}
+                              </div>
+                            </div>
+                          ))}
+
+                          {/* 3. FLOATING THREE DOTS THINKING INDICATOR */}
+                          {chatLoading && (
+                            <div className="flex flex-col items-start">
+                              <span className="text-[9px] text-indigo-200/80 mb-0.5 font-bold px-1">Chef Bot is typing...</span>
+                              <div className="px-4 py-2.5 bg-white/10 border border-white/5 rounded-2xl rounded-tl-none shadow-sm flex items-center justify-center">
+                                <div className="flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 4. CHAT INPUT AT THE BOTTOM */}
+                      <form onSubmit={(e) => handleSendChatMessage(e)} className="flex gap-2">
                         <input
                           type="text"
-                          placeholder="Type or click question..."
+                          placeholder="Type kitchen question..."
                           value={chatInput}
                           onChange={e => setChatInput(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && handleSendChatMessage(e)}
-                          className="bg-white/15 border-none rounded-xl text-xs flex-1 px-4 py-2.5 text-white placeholder-indigo-200 focus:outline-none focus:ring-2 focus:ring-white/50"
+                          className="bg-white/10 border border-white/10 rounded-xl text-xs flex-1 px-4 py-3 text-white placeholder-indigo-200 focus:outline-none focus:ring-2 focus:ring-white/50"
                         />
                         <button 
-                          onClick={() => setChatOpen(true)}
-                          className="p-2.5 bg-white rounded-xl text-indigo-700 hover:bg-slate-50 transition-colors"
+                          type="submit"
+                          disabled={chatLoading}
+                          className="p-3 bg-white hover:bg-slate-50 rounded-xl text-indigo-700 transition-colors shadow-sm disabled:opacity-50 cursor-pointer shrink-0"
                         >
                           <Send className="w-4 h-4" />
                         </button>
-                      </div>
+                      </form>
 
                     </div>
                   </div>
@@ -1578,7 +1919,11 @@ export default function App() {
                           : 'bg-emerald-600 text-white rounded-tr-none'
                       }`}
                     >
-                      <p className="leading-relaxed whitespace-pre-line">{msg.text}</p>
+                      {isAI ? (
+                        renderFormattedText(msg.text, true)
+                      ) : (
+                        <p className="leading-relaxed whitespace-pre-line text-[11px] font-medium text-white">{msg.text}</p>
+                      )}
                     </div>
                     <span className="text-[9px] text-slate-400 mt-1 self-end">
                       {msg.timestamp}
@@ -1661,49 +2006,102 @@ export default function App() {
                   </div>
                 </div>
 
-                <button
-                  onClick={() => setScannerOpen(false)}
-                  className="p-1 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-800 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                {capturedPhoto || scannedPreviewItems.length > 0 ? (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-700 text-[10px] font-black uppercase tracking-wider rounded-xl border border-amber-100 animate-pulse select-none">
+                    <Lock className="w-3.5 h-3.5" /> Scan Locked
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setScannerOpen(false)}
+                    className="p-1 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-800 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                )}
               </div>
 
               <div className="p-6 space-y-6 flex-1">
                 
                 {/* Scan Type selectors Tab */}
-                <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1 rounded-2xl">
-                  <button
-                    onClick={() => { setScanType('receipt'); setScannedPreviewItems([]); }}
-                    className={`py-2 text-xs font-bold rounded-xl transition-all ${
-                      scanType === 'receipt' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    🧾 Scan Receipt
-                  </button>
-                  <button
-                    onClick={() => { setScanType('item'); setScannedPreviewItems([]); }}
-                    className={`py-2 text-xs font-bold rounded-xl transition-all ${
-                      scanType === 'item' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    🥬 Take Food Photo
-                  </button>
-                  <button
-                    onClick={() => { setScanType('barcode'); setScannedPreviewItems([]); }}
-                    className={`py-2 text-xs font-bold rounded-xl transition-all ${
-                      scanType === 'barcode' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    🏷️ Scan Barcode
-                  </button>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1 rounded-2xl">
+                    <button
+                      onClick={() => {
+                        if (capturedPhoto || scannedPreviewItems.length > 0) return;
+                        setScanType('receipt');
+                        setScannedPreviewItems([]);
+                      }}
+                      disabled={!!capturedPhoto || scannedPreviewItems.length > 0}
+                      className={`py-2 text-xs font-bold rounded-xl transition-all ${
+                        scanType === 'receipt' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                      } ${(capturedPhoto || scannedPreviewItems.length > 0) ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                    >
+                      🧾 Scan Receipt
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (capturedPhoto || scannedPreviewItems.length > 0) return;
+                        setScanType('item');
+                        setScannedPreviewItems([]);
+                      }}
+                      disabled={!!capturedPhoto || scannedPreviewItems.length > 0}
+                      className={`py-2 text-xs font-bold rounded-xl transition-all ${
+                        scanType === 'item' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                      } ${(capturedPhoto || scannedPreviewItems.length > 0) ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                    >
+                      🥬 Take Food Photo
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (capturedPhoto || scannedPreviewItems.length > 0) return;
+                        setScanType('barcode');
+                        setScannedPreviewItems([]);
+                      }}
+                      disabled={!!capturedPhoto || scannedPreviewItems.length > 0}
+                      className={`py-2 text-xs font-bold rounded-xl transition-all ${
+                        scanType === 'barcode' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                      } ${(capturedPhoto || scannedPreviewItems.length > 0) ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                    >
+                      🏷️ Scan Barcode
+                    </button>
+                  </div>
+
+                  {(capturedPhoto || scannedPreviewItems.length > 0) && (
+                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex items-start gap-2.5 text-[11px] text-amber-800 font-bold shadow-sm animate-pulse">
+                      <Lock className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-extrabold uppercase tracking-wide">Scanner mode locked during session</p>
+                        <p className="text-[10px] text-amber-600 font-medium mt-0.5">Please discard current captured image or confirm/approve changes before navigating away or switching scan modes.</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Simulated Device Canvas Camera Area */}
-                <div className="relative border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50 p-6 text-center space-y-3 min-h-[160px] flex flex-col justify-center items-center">
-                  
+                <div 
+                  onDragEnter={handleDrag}
+                  onDragOver={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDrop={handleDrop}
+                  className={`relative border-2 border-dashed rounded-3xl p-6 text-center min-h-[260px] flex flex-col justify-center items-center transition-all ${
+                    dragActive ? 'border-emerald-500 bg-emerald-50/40' : 'border-slate-200 bg-slate-50'
+                  }`}
+                >
+                  {/* Camera Flash Screen Animation Overlay */}
+                  <AnimatePresence>
+                    {showFlash && (
+                      <motion.div 
+                        initial={{ opacity: 0.8 }}
+                        animate={{ opacity: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute inset-0 bg-white z-40 rounded-3xl"
+                      />
+                    )}
+                  </AnimatePresence>
+
                   {scanLoading ? (
-                    <div className="space-y-4">
+                    <div className="space-y-4 py-8">
                       <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
                       <div>
                         <p className="text-xs font-bold text-slate-900">Uploading to Gemini-3.5-Flash Core...</p>
@@ -1711,70 +2109,201 @@ export default function App() {
                       </div>
                     </div>
                   ) : scannedPreviewItems.length > 0 ? (
-                    <div className="space-y-2 text-center">
+                    <div className="space-y-2 text-center py-6">
                       <span className="text-3xl text-emerald-600">✨</span>
                       <p className="text-xs font-bold text-slate-900">AI Food Search Completed Perfectly!</p>
                       <p className="text-[10px] text-slate-400">See extracted items below. Approve to log.</p>
                       <button 
-                        onClick={() => { setScannedPreviewItems([]); }}
+                        onClick={() => { setScannedPreviewItems([]); setCapturedPhoto(null); }}
                         className="text-[11px] font-bold text-slate-500 hover:underline"
                       >
                         Reset Camera Snap
                       </button>
                     </div>
-                  ) : (
-                    <div className="space-y-4 z-10">
-                      <div className="w-12 h-12 bg-white border border-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400 shadow-sm">
-                        <Camera className="w-6 h-6 text-emerald-600" />
+                  ) : capturedPhoto ? (
+                    /* Captured Photo Preview & Action state */
+                    <div className="w-full flex flex-col items-center space-y-4">
+                      <div className="relative max-w-sm w-full aspect-video rounded-2xl overflow-hidden border-2 border-emerald-500 shadow-md bg-slate-900">
+                        <img 
+                          src={capturedPhoto} 
+                          alt="Captured Food Snapshot" 
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover" 
+                        />
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-3 text-left">
+                          <p className="text-[11px] font-bold text-white flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                            Ready for AI extraction • {scanType === 'receipt' ? '🧾 Receipt' : scanType === 'item' ? '🥬 Food item' : '🏷️ Barcode'}
+                          </p>
+                        </div>
                       </div>
-                      
-                      <div>
-                        <p className="text-xs font-bold text-slate-900">Select simulated demo scan trigger:</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Launches high-fidelity receipt parsing engine</p>
-                      </div>
 
-                      <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-                        {scanType === 'receipt' && (
-                          <>
-                            <button
-                              onClick={executeScan}
-                              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all"
-                            >
-                              Scan Costco Retail Receipt
-                            </button>
-                            <button
-                              onClick={executeScan}
-                              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all"
-                            >
-                              Scan Trader Joe's Checkout
-                            </button>
-                          </>
-                        )}
-
-                        {scanType === 'item' && (
-                          <button
-                            onClick={executeScan}
-                            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all"
-                          >
-                            Snapshot of Rotisserie Chicken
-                          </button>
-                        )}
-
-                        {scanType === 'barcode' && (
-                          <button
-                            onClick={executeScan}
-                            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all"
-                          >
-                            Simulate UPC Barcode scan (Olive Oil)
-                          </button>
-                        )}
+                      <div className="flex flex-wrap items-center justify-center gap-3">
+                        <button
+                          onClick={() => executeScan(capturedPhoto)}
+                          className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" /> Analyze Image with AI
+                        </button>
+                        <button
+                          onClick={() => { setCapturedPhoto(null); startCamera(); }}
+                          className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" /> Retake Photo
+                        </button>
                       </div>
                     </div>
-                  )}
+                  ) : cameraActive ? (
+                    /* Active Webcam Live Feed */
+                    <div className="w-full flex flex-col items-center space-y-4">
+                      {cameraError && (
+                        <div className="w-full max-w-sm p-3 bg-rose-50 border border-rose-100 rounded-xl text-rose-600 text-[11px] font-medium flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                          <span>{cameraError}</span>
+                        </div>
+                      )}
 
-                  {/* Horizontal scanning light active on loading */}
-                  {scanLoading && (
-                    <div className="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-400 rounded animate-pulse" />
+                      <div className="relative max-w-sm w-full aspect-video rounded-2xl overflow-hidden border border-slate-200 shadow-inner bg-slate-950 flex items-center justify-center">
+                        <video 
+                          ref={videoRef}
+                          autoPlay 
+                          playsInline
+                          muted
+                          className="w-full h-full object-cover"
+                        />
+                        
+                        {/* Live Feed indicator absolute overlay */}
+                        <div className="absolute top-3 left-3 px-2 py-1 bg-black/70 rounded-lg backdrop-blur-sm text-[10px] font-black text-white flex items-center gap-1.5 tracking-widest uppercase">
+                          <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping" />
+                          <span>LIVE FEED</span>
+                        </div>
+
+                        {/* Scan Area Overlay Guides */}
+                        <div className="absolute inset-0 border-[2px] border-emerald-500/30 m-6 rounded-xl pointer-events-none flex items-center justify-center">
+                          {scanType === 'receipt' && (
+                            <div className="w-2/3 h-5/6 border border-dashed border-emerald-400/80 rounded flex items-center justify-center">
+                              <span className="text-[10px] font-bold text-white/40 tracking-wider">ALIGN RECEIPT</span>
+                            </div>
+                          )}
+                          {scanType === 'barcode' && (
+                            <div className="w-4/5 h-1/4 border-2 border-emerald-400/80 rounded relative flex items-center justify-center animate-pulse">
+                              <div className="absolute w-full h-[2px] bg-rose-500" />
+                              <span className="text-[10px] font-bold text-white/50 tracking-wider">ALIGN BARCODE</span>
+                            </div>
+                          )}
+                          {scanType === 'item' && (
+                            <div className="w-1/2 aspect-square border border-dashed border-emerald-400/80 rounded-full flex items-center justify-center">
+                              <span className="text-[10px] font-bold text-white/40 tracking-wider">CENTER FOOD</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={takeSnapshot}
+                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Camera className="w-4 h-4" /> Capture Photo
+                        </button>
+                        <button
+                          onClick={stopCamera}
+                          className="px-4 py-2.5 bg-slate-250 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-xl transition-all"
+                        >
+                          Turn Off Camera
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Camera Inactive (Launcher / Dropzone dashboard) */
+                    <div className="w-full space-y-5 z-10 py-4 flex flex-col items-center">
+                      {cameraError && (
+                        <div className="w-full max-w-sm p-3 bg-rose-50 border border-rose-100 rounded-xl text-rose-600 text-[11px] font-medium flex items-center gap-2 text-left mb-2">
+                          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                          <span>{cameraError}</span>
+                        </div>
+                      )}
+
+                      <div className="flex flex-col items-center space-y-3">
+                        <div className="w-14 h-14 bg-white border border-slate-100 rounded-full flex items-center justify-center text-slate-400 shadow-sm">
+                          <Camera className="w-7 h-7 text-emerald-600" />
+                        </div>
+                        
+                        <div>
+                          <p className="text-xs font-bold text-slate-900">Scan Receipts or Food with Laptop Camera</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Launches full screen live camera preview to detect food automatically</p>
+                        </div>
+
+                        <button
+                          onClick={startCamera}
+                          className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-all flex items-center gap-1.5 shadow-sm shadow-emerald-600/10 cursor-pointer"
+                        >
+                          <Camera className="w-3.5 h-3.5" /> Turn On Laptop Camera
+                        </button>
+                      </div>
+
+                      {/* Or upload divider line */}
+                      <div className="w-full max-w-xs flex items-center justify-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                        <div className="h-[1px] bg-slate-200 flex-1" />
+                        <span>or upload file</span>
+                        <div className="h-[1px] bg-slate-200 flex-1" />
+                      </div>
+
+                      {/* Dropzone File Input */}
+                      <label className="group flex flex-col items-center justify-center w-full max-w-xs p-4 bg-white hover:bg-slate-100/60 border border-dashed border-slate-200 hover:border-emerald-400 rounded-2xl cursor-pointer transition-all">
+                        <Upload className="w-5 h-5 text-slate-400 group-hover:text-emerald-500 mb-1.5 transition-colors" />
+                        <span className="text-[11px] font-bold text-slate-600 group-hover:text-slate-900 transition-colors">Select or Drag Photo Here</span>
+                        <span className="text-[9px] text-slate-400 mt-0.5">Supports PNG, JPEG up to 10MB</span>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          onChange={handleFileUpload} 
+                          className="hidden" 
+                        />
+                      </label>
+                      
+                      {/* Original convenient simulated triggers tucked away nicely */}
+                      <div className="pt-4 border-t border-slate-150 w-full">
+                        <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest mb-2.5">Or Simulate Instant Demo Scans:</p>
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          {scanType === 'receipt' && (
+                            <>
+                              <button
+                                onClick={() => executeScan()}
+                                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold rounded-xl transition-all"
+                              >
+                                Scan Costco Retail Receipt
+                              </button>
+                              <button
+                                onClick={() => executeScan()}
+                                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold rounded-xl transition-all"
+                              >
+                                Scan Trader Joe's Checkout
+                              </button>
+                            </>
+                          )}
+
+                          {scanType === 'item' && (
+                            <button
+                              onClick={() => executeScan()}
+                              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold rounded-xl transition-all"
+                            >
+                              Snapshot of Rotisserie Chicken
+                            </button>
+                          )}
+
+                          {scanType === 'barcode' && (
+                            <button
+                              onClick={() => executeScan()}
+                              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold rounded-xl transition-all"
+                            >
+                              Simulate UPC Barcode scan (Olive Oil)
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                    </div>
                   )}
 
                 </div>
@@ -1811,12 +2340,27 @@ export default function App() {
 
               {/* Action feet footer */}
               <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex items-center justify-end gap-3 rounded-b-3xl">
-                <button
-                  onClick={() => setScannerOpen(false)}
-                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
-                >
-                  Close Window
-                </button>
+                {capturedPhoto || scannedPreviewItems.length > 0 ? (
+                  <button
+                    onClick={() => {
+                      setCapturedPhoto(null);
+                      setScannedPreviewItems([]);
+                      setCameraError(null);
+                      stopCamera();
+                    }}
+                    className="px-4 py-2 text-xs font-bold bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 hover:text-rose-700 hover:border-rose-300 rounded-xl transition-all cursor-pointer flex items-center gap-1"
+                  >
+                    🗑️ Discard & Reset Scan
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setScannerOpen(false)}
+                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all border border-slate-200 cursor-pointer"
+                  >
+                    Close Window
+                  </button>
+                )}
+                
                 <button
                   onClick={approveScannedItems}
                   disabled={scannedPreviewItems.length === 0}

@@ -624,11 +624,17 @@ app.post("/api/chat", async (req, res) => {
 
   if (aiClient) {
     try {
-      const systemInstruction = `You are the Chef Instructor of PantryPal. You are an expert at home food storage, culinary techniques, leftover optimization, recipe substitutions, and saving money.
+      const systemInstruction = `You are the Chef Instructor of PantryPal, an expert at home food storage, culinary techniques, leftover optimization, recipe substitutions, and saving money.
       You have access to the user's active household pantry inventory for contextual reference:
       [${activePantryItemNames}]
       
-      Always keep your responses highly inspiring, friendly, clear, and actionable. Suggest smart cooking tricks and encourage family zero-waste savings. Be concise, avoiding text blocks that are too heavy. Try to structure with elegant bullet points!`;
+      CRITICAL FORMATTING RULES:
+      1. Your response MUST be extremely short: maximum 75 words total.
+      2. It MUST consist of exactly two parts:
+         - Part 1: Exactly ONE short, bold, engaging header line starting and ending with ** (e.g., **💡 Reviving Stale Sourdough** or **🥛 Buttermilk Substitutes**).
+         - A blank line.
+         - Part 2: Exactly ONE short, friendly, actionable paragraph (no more than 3-4 sentences total) answering the question.
+      3. You are strictly FORBIDDEN from outputting multiple paragraphs, lists, bullets, or headers. Keep it incredibly concise and easily readable.`;
 
       // Compose history
       const geminiHistory: any[] = [];
@@ -665,17 +671,27 @@ app.post("/api/chat", async (req, res) => {
   }
 
   // Smart Contextual Fallback answers for full fidelity without internet or key
-  let fallbackText = "That sounds fantastic! Since we have Sourdough Bread, Avocados, and Greek Yogurt in the fridge, I highly recommend making a seasoned yogurt spread as a base, layering fresh mashed avocado, and serving it on toasted sourdough. It saves money, utilizes your expiring produce perfectly, and feels like an upscale brunch masterwork! What other ingredients are you hoping to style?";
+  let fallbackText = `**💡 Quick Avocado Sourdough Idea**
+
+Since you have Sourdough, Avocados, and Greek Yogurt, toast your bread and spread a seasoned mixture of Greek yogurt and mashed avocado on top. It saves your expiring fresh produce, cuts down waste, and makes a beautiful brunch!`;
   
   const query = userMessage.toLowerCase();
   if (query.includes("bread") || query.includes("stale")) {
-    fallbackText = "Sourdough bread is wonderful for zero-waste! If it's starting to dry out, you can make beautiful toasted croutons (tossed with oil and garlic), rustic breadcrumbs, or savory french toast. You can even submerge a dry loaf briefly under cool running water and bake at 350°F for 7-10 minutes - it becomes perfectly crusty and soft again!";
+    fallbackText = `**🥖 Reviving Stale Sourdough**
+
+To make stale bread fresh, run the whole loaf quickly under cold tap water and bake at 350°F for 7-10 minutes to make it perfectly crusty and soft. You can also dice it to make garlic croutons, blend it into crumbs, or make savory French toast!`;
   } else if (query.includes("avocado") || query.includes("brown")) {
-    fallbackText = "A ripe avocado can be saved by mashing it with a tiny splash of lemon juice or vinegar to hold color, or wrapping it tightly with a cut onion (the sulfur compounds slow down oxidation!). Since you have 3 organic avocados in the fridge, they make great creamy smoothies or salad dressings if you want to use them up today!";
+    fallbackText = `**🥑 Keeping Avocados Green**
+
+Stop browning by brushing cut avocados with lemon juice or storing them in an airtight container next to a cut onion. The natural sulfur compounds in the onion slow down oxidation, keeping your avocados fresh for another 2-3 days!`;
   } else if (query.includes("spinach") || query.includes("wilt")) {
-    fallbackText = "If your fresh spinach is beginning to wilt: sauté it down with garlic as an instant high-nutrition side dish, blend it with frozen blueberries and whole milk into a powerhouse morning smoothie, or freeze it in convenient ice cube trays to drop into soups and pasta sauces later! This saves you about $3.29 in produce replacement costs!";
-  } else if (query.includes("substitute") || query.includes("substitution")) {
-    fallbackText = "Substitutions are a zero-waste superpower! If a recipe calls for mayonnaise, you can use plain Greek Yogurt which you already have. For buttermilk, add a teaspoon of vinegar or lemon juice to a cup of your Whole Milk and let it sit for 5 minutes. Let me know what specific ingredient you're looking to substitute!";
+    fallbackText = `**🥬 Saving Wilted Spinach**
+
+Revive wilted spinach in an ice water bath for 10 minutes, or simply cook it down with garlic as a nutritious side. You can also blend it into a healthy morning smoothie with fruit or freeze it in cubes for pasta sauces!`;
+  } else if (query.includes("substitute") || query.includes("substitution") || query.includes("buttermilk")) {
+    fallbackText = `**🥛 Easy Kitchen Substitutes**
+
+For buttermilk, add 1 tablespoon of lemon juice or vinegar to 1 cup of whole milk and let it sit for 5 minutes. You can also swap Greek yogurt for sour cream or mayonnaise 1:1 in almost any baking or savory dish!`;
   }
 
   setTimeout(() => {
