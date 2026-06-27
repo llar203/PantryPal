@@ -33,6 +33,18 @@ if (api_key) {
   console.log("No GEMINI_API_KEY found. Server will run with graceful mock fallbacks for AI services.");
 }
 
+// Helper to clean Markdown fences from Gemini output and parse safely
+function cleanAndParseJSON(text: string): any {
+  let cleaned = text.trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\n?/i, "");
+  }
+  if (cleaned.endsWith("```")) {
+    cleaned = cleaned.replace(/\n?```$/i, "");
+  }
+  return JSON.parse(cleaned.trim());
+}
+
 // Global In-Memory Database for demonstration/live updates
 // This ensures multiple virtual "family members" instantly see changes!
 let pantryInventory = [
@@ -374,7 +386,7 @@ app.post("/api/scan", async (req, res) => {
       });
 
       const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.5-flash",
         contents: { parts: contentsArray },
         config: {
           responseMimeType: "application/json",
@@ -398,7 +410,7 @@ app.post("/api/scan", async (req, res) => {
 
       const textOutput = response.text || "[]";
       console.log("Raw Gemini Scan output:", textOutput);
-      const parsedItems = JSON.parse(textOutput.trim());
+      const parsedItems = cleanAndParseJSON(textOutput);
       return res.json({ success: true, source: "gemini", items: parsedItems });
 
     } catch (err: any) {
@@ -492,7 +504,7 @@ For each recipe, calculate:
 10. savingAmount: Estimated dollar value saved by consuming this rather than throwing ingredients away and eating out (e.g. 15.50).`;
 
       const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -536,7 +548,7 @@ For each recipe, calculate:
       });
 
       const textRes = response.text || "[]";
-      const recipes = JSON.parse(textRes.trim());
+      const recipes = cleanAndParseJSON(textRes);
       return res.json({ success: true, source: "gemini", recipes });
     } catch (err: any) {
       console.error("Gemini recipe generator faulted. Triggering standard elegant fallback recipes:", err.message);
@@ -654,7 +666,7 @@ app.post("/api/chat", async (req, res) => {
       });
 
       const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.5-flash",
         contents: geminiHistory,
         config: {
           systemInstruction: systemInstruction,

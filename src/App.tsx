@@ -435,13 +435,20 @@ export default function App() {
       };
 
       if (base64Image) {
+        // Dynamically detect MIME type from the base64 data URL
+        let detectedMimeType = "image/jpeg";
+        const mimeMatch = base64Image.match(/^data:([^;]+);base64,/);
+        if (mimeMatch && mimeMatch[1]) {
+          detectedMimeType = mimeMatch[1];
+        }
+
         // Strip out base64 header if present
         const cleanBase64 = base64Image.includes('base64,') 
           ? base64Image.split('base64,')[1] 
           : base64Image;
         
         payload.imageBase64 = cleanBase64;
-        payload.mimeType = "image/jpeg";
+        payload.mimeType = detectedMimeType;
       }
       
       const res = await fetch('/api/scan', {
